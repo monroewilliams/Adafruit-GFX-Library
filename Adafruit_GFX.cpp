@@ -244,6 +244,371 @@ void Adafruit_GFX::writeFillRect(int16_t x, int16_t y, int16_t w, int16_t h,
   fillRect(x, y, w, h, color);
 }
 
+#if 0
+
+void Adafruit_GFX::writeFastFontBitmap(int16_t x, int16_t y, const uint8_t bitmap[], 
+                    uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY)
+{
+  // This is specifically for writing old-style font bitmaps, which are stored one byte per column.
+  for (int8_t i = 0; i < 5; i++, x += expandX) { // Char bitmap = 5 columns
+    uint8_t line = pgm_read_byte(bitmap);
+    bitmap++;
+    for (int8_t j = 0; j < 8; j++, line >>= 1) {
+      // Just for clarity (the compiler should optimize this variable away)
+      bool thisPixel = (line & 1)?true:false;
+
+      if (thisPixel || !transparent) {
+        int16_t startY = y + (j * expandY);
+        uint16_t writeColor = (thisPixel)?color:bg;
+        if (expandY == 1) {
+          if (expandX == 1) {
+            // single pixel
+            writePixel(x, startY, writeColor);
+          } else {
+            // horizontal line
+            writeFastHLine(x, startY, expandX - 1, writeColor);
+          }
+        } else { // expandY > 1
+          if (expandX == 1) {
+            // vertical line
+            writeFastVLine(x, startY, expandY - 1, writeColor);
+          } else {
+            // rectangle
+            writeFillRect(x, startY, expandX, expandY, writeColor);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Simplest version (no up-scaling). This is the expected case for most 1-bit sources.
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w,
+                int16_t h, uint16_t color, uint16_t bg, bool transparent)
+{
+  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
+  uint8_t byte = 0;
+
+  for (int16_t j = 0; j < h; j++, y++) {
+    for (int16_t i = 0; i < w; i++) {
+      if (i & 7)
+        byte <<= 1;
+      else
+        byte = pgm_read_byte(&bitmap[j * byteWidth + i / 8]);
+
+      bool thisPixel = (byte & 0x80);
+      if (thisPixel || !transparent) {
+        writePixel(x + i, y, (thisPixel)?color:bg);
+      }
+    }
+  }
+}
+
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w, int16_t h,
+                uint16_t color, uint16_t bg, bool transparent)
+{
+  // FIXME: this will need to change to work on AVR (or anything where PROGMEM is an actual thing)
+  // Maybe use a templatized method to generate an alternate function with a different getter?
+  writeFastBitmap(x, y, (const uint8_t*)bitmap, w, h, color, bg, transparent);
+}
+
+// Simple version (fallback impl). It's possible this should live here, and the complex version should live in Adafruit_SPITFT?
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w,
+                int16_t h, uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY)
+{
+  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
+  uint8_t byte = 0;
+
+  for (int16_t j = 0; j < h; j++, y += expandY) {
+    for (int16_t i = 0; i < w; i++) {
+      if (i & 7)
+        byte <<= 1;
+      else
+        byte = pgm_read_byte(&bitmap[j * byteWidth + i / 8]);
+
+      // Just for clarity (the compiler should optimize this variable away)
+      bool thisPixel = (byte & 0x80)?true:false;
+
+      if (thisPixel || !transparent) {
+        int16_t startX = x + (i * expandX);
+        uint16_t writeColor = (byte & 0x80)?color:bg;
+        if (expandY == 1) {
+          if (expandX == 1) {
+            // single pixel
+            writePixel(startX, y, writeColor);
+          } else {
+            // horizontal line
+            writeFastHLine(startX, y, expandX, writeColor);
+          }
+        } else { // height > 1
+          if (expandX == 1) {
+            // vertical line
+            writeFastVLine(startX, y, expandY, writeColor);
+          } else {
+            // rectangle
+            writeFillRect(startX, y, expandX, expandY, writeColor);
+          }
+        }
+      }
+    }
+  }
+}
+
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w, int16_t h,
+                uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY)
+{
+  // FIXME: this will need to change to work on AVR (or anything where PROGMEM is an actual thing)
+  // Maybe use a templatized method to generate an alternate function with a different getter?
+  writeFastBitmap(x, y, (const uint8_t*)bitmap, w, h, color, bg, transparent, expandX, expandY);
+}
+
+#else
+
+void Adafruit_GFX::writeFastFontBitmap(int16_t x, int16_t y, const uint8_t bitmap[], 
+                    uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY)
+{
+  // This is specifically for writing old-style font bitmaps, which are stored one byte per column.
+  for (int8_t i = 0; i < 5; i++, x += expandX) { // Char bitmap = 5 columns
+    int16_t runlength = 0;
+    bool lastPixel = false;
+    uint8_t line = pgm_read_byte(bitmap);
+    bitmap++;
+    for (int8_t j = 0; j <= 8; j++, line >>= 1) {
+      uint16_t drawlength = 0;
+      bool drawPixel = false;
+      // Just for clarity (the compiler should optimize this variable away)
+      bool thisPixel = (line & 1)?true:false;
+      if (j < 8)
+      {
+        // start of a new column.
+        if (runlength == 0) {
+          lastPixel = thisPixel;
+        }
+
+        if (lastPixel == thisPixel) {
+          // Pixel has the same value as the last one. Just add to the run count.
+          runlength++;
+        } else {
+          // End of a run. Draw the previous run.
+          drawlength = runlength;
+          drawPixel = lastPixel;
+          // and start the next run (which includes the current pixel)
+          runlength = 1;
+          lastPixel = thisPixel;
+        }
+      } else {
+        // End of the column. Always draw the last run.
+        drawlength = runlength;
+        drawPixel = lastPixel;
+      }
+
+      if (drawlength > 0)
+      {
+        if (drawPixel || !transparent) {
+          int16_t startY = y + ((j - drawlength) * expandY);
+          uint16_t height = drawlength * expandY;
+          uint16_t writeColor = (drawPixel)?color:bg;
+          if (height == 1) {
+            if (expandX == 1) {
+              // single pixel
+              writePixel(x, startY, writeColor);
+            } else {
+              // horizontal line
+              writeFastHLine(x, startY, expandX - 1, writeColor);
+            }
+          } else { // height > 1
+            if (expandX == 1) {
+              // vertical line
+              writeFastVLine(x, startY, height - 1, writeColor);
+            } else {
+              // rectangle
+              writeFillRect(x, startY, expandX, height, writeColor);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w,
+                int16_t h, uint16_t color, uint16_t bg, bool transparent)
+{
+  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
+  uint8_t byte = 0;
+
+
+  for (int16_t j = 0; j < h; j++, y++) {
+    int16_t runlength = 0;
+    bool lastPixel = false;
+    for (int16_t i = 0; i <= w; i++) {
+      uint16_t drawlength = 0;
+      bool drawPixel = false;
+      
+      if (i < w)
+      {
+        // load or shift in a pixel
+        if (i & 7)
+          byte <<= 1;
+        else
+          byte = pgm_read_byte(&bitmap[i / 8]);
+
+        // Just for clarity (the compiler should optimize this variable away)
+        bool thisPixel = (byte & 0x80)?true:false;
+
+        // start of a new row.
+        if (runlength == 0) {
+          lastPixel = thisPixel;
+        }
+
+        if (lastPixel == thisPixel) {
+          // Pixel has the same value as the last one. Just add to the run count.
+          runlength++;
+        } else {
+          // End of a run. Draw the previous run.
+          drawlength = runlength;
+          drawPixel = lastPixel;
+          // and start the next run (which includes the current pixel)
+          runlength = 1;
+          lastPixel = thisPixel;
+        }
+      } else {
+        // End of the row. Always draw the last run.
+        drawlength = runlength;
+        drawPixel = lastPixel;
+      }
+
+      if (drawlength > 0)
+      {
+        if (drawPixel || !transparent) {
+          int16_t startX = x + (i - drawlength);
+          uint16_t width = drawlength;
+          uint16_t writeColor = (drawPixel)?color:bg;
+          if (width == 1) {
+            // single pixel
+            writePixel(startX, y, writeColor);
+          } else {
+            // horizontal line
+            writeFastHLine(startX, y, width - 1, writeColor);
+          }
+        } else {
+          // Transparent run, nothing to do here.
+        }
+      }
+    }
+    // Advance bitmap pointer to the next row
+    bitmap += byteWidth;
+  }
+}
+
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w, int16_t h,
+                uint16_t color, uint16_t bg, bool transparent)
+{
+  // FIXME: this will need to change to work on AVR (or anything where PROGMEM is an actual thing)
+  // Maybe use a templatized method to generate an alternate function with a different getter?
+  writeFastBitmap(x, y, (const uint8_t*)bitmap, w, h, color, bg, transparent);
+}
+
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w,
+                int16_t h, uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY)
+{
+  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
+  uint8_t byte = 0;
+  if (x + w >= width()) {
+      w = width() - x;
+      if (w <= 0)
+        return;
+  }
+  if (y + h >= height()) {
+      h = height() - y;
+      if (h <= 0)
+        return;
+  }
+
+  for (int16_t j = 0; j < h; j++, y += expandY) {
+    int16_t runlength = 0;
+    bool lastPixel;
+    for (int16_t i = 0; i <= w; i++) {
+      uint16_t drawlength = 0;
+      bool drawPixel;
+
+      if (i < w) {
+        // load or shift in a pixel
+        if (i & 7)
+          byte <<= 1;
+        else
+          byte = pgm_read_byte(&bitmap[i / 8]);
+
+        // Just for clarity (the compiler should optimize this variable away)
+        bool thisPixel = (byte & 0x80)?true:false;
+
+        // start of a new row.
+        if (runlength == 0) {
+          lastPixel = thisPixel;
+        }
+
+        if (lastPixel == thisPixel) {
+          // Pixel has the same value as the last one. Just add to the run count.
+          runlength++;
+        } else {
+          // End of a run. Draw the previous run.
+          drawlength = runlength;
+          drawPixel = lastPixel;
+          // and start the next run (which includes the current pixel)
+          runlength = 1;
+          lastPixel = thisPixel;
+        }
+      } else {
+        // End of the row. Always draw the last run.
+        drawlength = runlength;
+        drawPixel = lastPixel;
+        // reset for the next row
+        runlength = 0;
+      }
+
+      if (drawlength > 0) {
+        if (drawPixel || !transparent) {
+          int16_t startX = x + ((i - drawlength) * expandX);
+          uint16_t width = drawlength * expandX;
+          uint16_t writeColor = (drawPixel)?color:bg;
+          if (expandY == 1) {
+            if (width == 1) {
+              // single pixel
+              writePixel(startX, y, writeColor);
+            } else {
+              // horizontal line
+              writeFastHLine(startX, y, width - 1, writeColor);
+            }
+          } else { // expandY > 1
+            if (width == 1) {
+              // vertical line
+              writeFastVLine(startX, y, expandY, writeColor);
+            } else {
+              // rectangle
+              writeFillRect(startX, y, width, expandY, writeColor);
+            }
+          }
+        }
+      } else {
+        // Transparent run, nothing to do here.
+      }
+    }
+  // Advance bitmap pointer to the next row
+    bitmap += byteWidth;
+  }
+}
+
+// #endif
+
+void Adafruit_GFX::writeFastBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w, int16_t h,
+                uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY)
+{
+  // FIXME: this will need to change to work on AVR (or anything where PROGMEM is an actual thing)
+  // Maybe use a templatized method to generate an alternate function with a different getter?
+  writeFastBitmap(x, y, (const uint8_t*)bitmap, w, h, color, bg, transparent, expandX, expandY);
+}
+#endif
+
 /**************************************************************************/
 /*!
    @brief    End a display-writing routine, overwrite in subclasses if
@@ -717,20 +1082,8 @@ void Adafruit_GFX::fillTriangle(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
 void Adafruit_GFX::drawBitmap(int16_t x, int16_t y, const uint8_t bitmap[],
                               int16_t w, int16_t h, uint16_t color) {
 
-  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
-  uint8_t byte = 0;
-
   startWrite();
-  for (int16_t j = 0; j < h; j++, y++) {
-    for (int16_t i = 0; i < w; i++) {
-      if (i & 7)
-        byte <<= 1;
-      else
-        byte = pgm_read_byte(&bitmap[j * byteWidth + i / 8]);
-      if (byte & 0x80)
-        writePixel(x + i, y, color);
-    }
-  }
+  writeFastBitmap(x, y, bitmap, w, h, color);
   endWrite();
 }
 
@@ -752,19 +1105,8 @@ void Adafruit_GFX::drawBitmap(int16_t x, int16_t y, const uint8_t bitmap[],
                               int16_t w, int16_t h, uint16_t color,
                               uint16_t bg) {
 
-  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
-  uint8_t byte = 0;
-
   startWrite();
-  for (int16_t j = 0; j < h; j++, y++) {
-    for (int16_t i = 0; i < w; i++) {
-      if (i & 7)
-        byte <<= 1;
-      else
-        byte = pgm_read_byte(&bitmap[j * byteWidth + i / 8]);
-      writePixel(x + i, y, (byte & 0x80) ? color : bg);
-    }
-  }
+  writeFastBitmap(x, y, bitmap, w, h, color, bg, false);
   endWrite();
 }
 
@@ -783,20 +1125,8 @@ void Adafruit_GFX::drawBitmap(int16_t x, int16_t y, const uint8_t bitmap[],
 void Adafruit_GFX::drawBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w,
                               int16_t h, uint16_t color) {
 
-  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
-  uint8_t byte = 0;
-
   startWrite();
-  for (int16_t j = 0; j < h; j++, y++) {
-    for (int16_t i = 0; i < w; i++) {
-      if (i & 7)
-        byte <<= 1;
-      else
-        byte = bitmap[j * byteWidth + i / 8];
-      if (byte & 0x80)
-        writePixel(x + i, y, color);
-    }
-  }
+  writeFastBitmap(x, y, bitmap, w, h, color);
   endWrite();
 }
 
@@ -817,19 +1147,8 @@ void Adafruit_GFX::drawBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w,
 void Adafruit_GFX::drawBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w,
                               int16_t h, uint16_t color, uint16_t bg) {
 
-  int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
-  uint8_t byte = 0;
-
   startWrite();
-  for (int16_t j = 0; j < h; j++, y++) {
-    for (int16_t i = 0; i < w; i++) {
-      if (i & 7)
-        byte <<= 1;
-      else
-        byte = bitmap[j * byteWidth + i / 8];
-      writePixel(x + i, y, (byte & 0x80) ? color : bg);
-    }
-  }
+  writeFastBitmap(x, y, bitmap, w, h, color, bg, false);
   endWrite();
 }
 
@@ -1147,23 +1466,7 @@ void Adafruit_GFX::drawChar(int16_t x, int16_t y, unsigned char c,
       c++; // Handle 'classic' charset behavior
 
     startWrite();
-    for (int8_t i = 0; i < 5; i++) { // Char bitmap = 5 columns
-      uint8_t line = pgm_read_byte(&font[c * 5 + i]);
-      for (int8_t j = 0; j < 8; j++, line >>= 1) {
-        if (line & 1) {
-          if (size_x == 1 && size_y == 1)
-            writePixel(x + i, y + j, color);
-          else
-            writeFillRect(x + i * size_x, y + j * size_y, size_x, size_y,
-                          color);
-        } else if (bg != color) {
-          if (size_x == 1 && size_y == 1)
-            writePixel(x + i, y + j, bg);
-          else
-            writeFillRect(x + i * size_x, y + j * size_y, size_x, size_y, bg);
-        }
-      }
-    }
+    writeFastFontBitmap(x, y, &font[c * 5], color, bg, (bg == color), size_x, size_y);
     if (bg != color) { // If opaque, draw vertical line for last column
       if (size_x == 1 && size_y == 1)
         writeFastVLine(x + 5, y, 8, bg);
@@ -1184,15 +1487,8 @@ void Adafruit_GFX::drawChar(int16_t x, int16_t y, unsigned char c,
 
     uint16_t bo = pgm_read_word(&glyph->bitmapOffset);
     uint8_t w = pgm_read_byte(&glyph->width), h = pgm_read_byte(&glyph->height);
-    int8_t xo = pgm_read_byte(&glyph->xOffset),
+    int16_t xo = pgm_read_byte(&glyph->xOffset),
            yo = pgm_read_byte(&glyph->yOffset);
-    uint8_t xx, yy, bits = 0, bit = 0;
-    int16_t xo16 = 0, yo16 = 0;
-
-    if (size_x > 1 || size_y > 1) {
-      xo16 = xo;
-      yo16 = yo;
-    }
 
     // Todo: Add character clipping here
 
@@ -1213,22 +1509,7 @@ void Adafruit_GFX::drawChar(int16_t x, int16_t y, unsigned char c,
     // implemented this yet.
 
     startWrite();
-    for (yy = 0; yy < h; yy++) {
-      for (xx = 0; xx < w; xx++) {
-        if (!(bit++ & 7)) {
-          bits = pgm_read_byte(&bitmap[bo++]);
-        }
-        if (bits & 0x80) {
-          if (size_x == 1 && size_y == 1) {
-            writePixel(x + xo + xx, y + yo + yy, color);
-          } else {
-            writeFillRect(x + (xo16 + xx) * size_x, y + (yo16 + yy) * size_y,
-                          size_x, size_y, color);
-          }
-        }
-        bits <<= 1;
-      }
-    }
+    writeFastBitmap(x + xo, y + yo, &bitmap[bo], w, h, color, 0, true, size_x, size_y);
     endWrite();
 
   } // End classic vs custom font

@@ -39,6 +39,20 @@ public:
   virtual void writeFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
   virtual void writeLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
                          uint16_t color);
+
+  // These are used to draw 1-bit bitmaps, both in drawBitmap and font drawing.
+  // For some displays, the SPI command overhead of writePixel is high enough that it's worth coalescing where possible.
+  void writeFastFontBitmap(int16_t x, int16_t y, const uint8_t bitmap[], 
+                  uint16_t color, uint16_t bg = 0, bool transparent = true, uint8_t expandX = 1, uint8_t expandY = 1);
+  void writeFastBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w,
+                  int16_t h, uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY);
+  void writeFastBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w, int16_t h,
+                  uint16_t color, uint16_t bg, bool transparent, uint8_t expandX, uint8_t expandY);
+  void writeFastBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w,
+                  int16_t h, uint16_t color, uint16_t bg = 0, bool transparent = true);
+  void writeFastBitmap(int16_t x, int16_t y, uint8_t *bitmap, int16_t w, int16_t h,
+                  uint16_t color, uint16_t bg = 0, bool transparent = true);
+
   virtual void endWrite(void);
 
   // CONTROL API
